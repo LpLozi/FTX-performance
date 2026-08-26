@@ -16,6 +16,8 @@ interface Props {
   onReplace: () => void;
 }
 
+type EntryField = 'weight' | 'reps' | 'rir';
+
 export function WorkoutExerciseCard({ planId, exerciseIndex, exercise, previousSets, onSetCompleted, onReplace }: Props) {
   const { state, dispatch } = useStore();
   const draft = state.persisted.workoutDrafts[planId];
@@ -23,8 +25,19 @@ export function WorkoutExerciseCard({ planId, exerciseIndex, exercise, previousS
   const guide = PROGRAM_EXERCISE_GUIDES[exercise.name] || DEFAULT_GUIDE;
   const keypad = useSetEntryKeypad();
   const containerRef = useRef<HTMLDivElement>(null);
+  const pendingRef = useRef<Record<number, Partial<Record<EntryField, string>>>>({});
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  function setField(setIndex: number, field: 'weight' | 'reps' | 'rir', value: string) {
+  function fieldKey(setIndex: number, field: EntryField) { return `${setIndex}:${field}`; }
+  function currentValue(setIndex: number, field: EntryField) {
+    return pendingRef.current[setIndex]?.[field] ?? String(rows[setIndex]?.[field] ?? '');
+  }
+  function setPending(setIndex: number, field: EntryField, value: string) {
+    pendingRef.current[setIndex] = { ...(pendingRef.current[setIndex] || {}), [field]: value };
+    const el = inputRefs.current[fieldKey(setIndex, field)];
+    if (el && el.value !== value) el.value = value;
+  }
+  function setField(setIndex: number, field: EntryField, value: string) {
     dispatch({ type: 'SET_DRAFT_SET_FIELD', planId, exerciseIndex, setIndex, field, value });
   }
   function markDone(setIndex: number, checked: boolean) {
@@ -32,57 +45,54 @@ export function WorkoutExerciseCard({ planId, exerciseIndex, exercise, previousS
     if (checked) onSetCompleted(guide.rest, `${exercise.name} • ${setIndex + 1}. set sonrası`);
   }
 
-  function commitActive() {
-    if (!keypad.active) return;
-    setField(keypad.active.setIndex, keypad.active.field, keypad.value);
+  function openField(setIndex: number, field: EntryField) {
+    keypad.setActive({ exerciseIndex, setIndex, field });
   }
 
-  function openField(setIndex: number, field: 'weight' | 'reps' | 'rir') {
-    // If the user taps another field directly while the keypad is already open,
-    // persist the field they were editing before moving focus.
-    if (keypad.active && (keypad.active.setIndex !== setIndex || keypad.active.field !== field)) commitActive();
-    keypad.setActive({ exerciseIndex, setIndex, field });
-    keypad.setValue(String(rows[setIndex]?.[field] ?? ''));
+  function previewValue(v: string) {
+    if (!keypad.active) return;
+    setPending(keypad.active.setIndex, keypad.active.field, v);
   }
-  function keypadChange(v: string) {
-    // Keep keystrokes local. The old implementation dispatched into the global
-    // app reducer on EVERY digit, which re-rendered every Store consumer and
-    // made iPhone entry visibly laggy. Commit only when moving fields/closing.
-    keypad.setValue(v);
-  }
-  function keypadNext() {
-    if (!keypad.active || !keypad.value.trim()) return;
+
+  function keypadNext(v: string) {
+    if (!keypad.active || !v.trim()) return;
     const { setIndex, field } = keypad.active;
-    commitActive();
+    setPending(setIndex, field, v);
+
     if (field === 'weight') {
       keypad.setActive({ exerciseIndex, setIndex, field: 'reps' });
-      keypad.setValue(String(rows[setIndex]?.reps ?? ''));
       return;
     }
     if (field === 'reps') {
       keypad.setActive({ exerciseIndex, setIndex, field: 'rir' });
-      keypad.setValue(String(rows[setIndex]?.rir ?? ''));
       return;
     }
-    // field === 'rir': complete the set and move to the next set's weight.
+
+    // One logical commit point per completed set. Keystrokes and Weight→Reps→RIR
+    // transitions never touch global app state; only Seti tamamla does.
+    const pending = pendingRef.current[setIndex] || {};
+    setField(setIndex, 'weight', pending.weight ?? String(rows[setIndex]?.weight ?? ''));
+    setField(setIndex, 'reps', pending.reps ?? String(rows[setIndex]?.reps ?? ''));
+    setField(setIndex, 'rir', pending.rir ?? v);
     markDone(setIndex, true);
+    delete pendingRef.current[setIndex];
+
     const nextRowExists = setIndex + 1 < rows.length;
-    if (nextRowExists) {
-      keypad.setActive({ exerciseIndex, setIndex: setIndex + 1, field: 'weight' });
-      keypad.setValue(String(rows[setIndex + 1]?.weight ?? ''));
-    } else {
-      keypad.setActive(null);
+    if (nextRowExists) keypad.setActive({ exerciseIndex, setIndex: setIndex + 1, field: 'weight' });
+    else keypad.setActive(null);
+  }
+
+  function closeKeypad(v: string) {
+    if (keypad.active) {
+      const { setIndex, field } = keypad.active;
+      setPending(setIndex, field, v);
+      const pending = pendingRef.current[setIndex] || {};
+      (['weight', 'reps', 'rir'] as EntryField[]).forEach((f) => {
+        if (pending[f] !== undefined) setField(setIndex, f, pending[f]!);
+      });
+      delete pendingRef.current[setIndex];
     }
-  }
-
-  function closeKeypad() {
-    commitActive();
     keypad.setActive(null);
-  }
-
-  function displayValue(setIndex: number, field: 'weight' | 'reps' | 'rir') {
-    const a = keypad.active;
-    return a && a.setIndex === setIndex && a.field === field ? keypad.value : String(rows[setIndex]?.[field] ?? '');
   }
 
   return (
@@ -111,9 +121,9 @@ export function WorkoutExerciseCard({ planId, exerciseIndex, exercise, previousS
                 <tr key={j}>
                   <td>{j + 1}</td>
                   <td className="muted">{prev ? `${prev.weight ?? '-'} × ${prev.reps ?? '-'}` : '- × -'}</td>
-                  <td><input readOnly inputMode="none" value={displayValue(j, 'weight')} onFocus={() => openField(j, 'weight')} placeholder="kg" /></td>
-                  <td><input readOnly inputMode="none" value={displayValue(j, 'reps')} onFocus={() => openField(j, 'reps')} placeholder="tekrar" /></td>
-                  <td><input readOnly inputMode="none" value={displayValue(j, 'rir')} onFocus={() => openField(j, 'rir')} placeholder="RIR" /></td>
+                  <td><input ref={(el) => { inputRefs.current[fieldKey(j, 'weight')] = el; }} readOnly inputMode="none" defaultValue={currentValue(j, 'weight')} onFocus={() => openField(j, 'weight')} placeholder="kg" /></td>
+                  <td><input ref={(el) => { inputRefs.current[fieldKey(j, 'reps')] = el; }} readOnly inputMode="none" defaultValue={currentValue(j, 'reps')} onFocus={() => openField(j, 'reps')} placeholder="tekrar" /></td>
+                  <td><input ref={(el) => { inputRefs.current[fieldKey(j, 'rir')] = el; }} readOnly inputMode="none" defaultValue={currentValue(j, 'rir')} onFocus={() => openField(j, 'rir')} placeholder="RIR" /></td>
                   <td><input type="checkbox" checked={!!row.done} onChange={(e) => markDone(j, e.target.checked)} /></td>
                 </tr>
               );
@@ -134,9 +144,8 @@ export function WorkoutExerciseCard({ planId, exerciseIndex, exercise, previousS
       </details>
       <SetEntryKeypad
         active={keypad.active}
-        value={keypad.value}
-        onOpen={keypad.setActive}
-        onChange={keypadChange}
+        initialValue={keypad.active ? currentValue(keypad.active.setIndex, keypad.active.field) : ''}
+        onPreview={previewValue}
         onNext={keypadNext}
         onClose={closeKeypad}
         isLastField={keypad.active?.field === 'rir'}

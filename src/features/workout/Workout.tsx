@@ -48,7 +48,9 @@ function applyLoadToWorkingSets(dispatch: any, planId: string, exerciseIndex: nu
   // unlike coach-plus.js's earlier one — only fills setType==='working'
   // rows, not every non-warmup row). Reuses the existing SET_DRAFT_SET_FIELD
   // action in a loop; no new reducer action is introduced.
-  const rows = currentRows && currentRows.length ? currentRows : Array.from({ length: exercise.sets || 1 }, () => ({}));
+  const rows: { setType?: string }[] = currentRows && currentRows.length
+    ? currentRows
+    : Array.from({ length: exercise.sets || 1 }, (): { setType?: string } => ({}));
   rows.forEach((row, j) => {
     const type = row.setType || 'working';
     if (type === 'working') dispatch({ type: 'SET_DRAFT_SET_FIELD', planId, exerciseIndex, setIndex: j, field: 'weight', value: String(weight) });

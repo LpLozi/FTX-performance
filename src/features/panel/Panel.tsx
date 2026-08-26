@@ -4,6 +4,7 @@ import { Card, ProgressBar, fmt } from '../../components/ui';
 import { nutrientTotals, estimateBodyFat, matchScheduleToWorkouts, readinessScore, weekBounds, addDays } from '../../core/selectors';
 import { calorieCoachSuggestion, fullWeeklyReport, muscleWeeklyVolume } from '../../core/coachSelectors';
 import { todayWorkout } from '../../data/programs';
+import type { Weekday } from '../../core/types';
 
 export function Panel() {
   const { state, dispatch } = useStore();
@@ -31,7 +32,7 @@ export function Panel() {
     const out: { date: string; plan: string }[] = [];
     for (let k = start; k < today; k = addDays(k, 1)) {
       const d = new Date(`${k}T12:00:00`);
-      const scheduled = persisted.schedule[d.getDay() as any];
+      const scheduled = persisted.schedule[d.getDay() as Weekday];
       if (!scheduled) continue;
       const decided = persisted.missedWorkoutDecisions[k];
       const done = persisted.workouts.some((w) => w.date === k && w.type === scheduled);
